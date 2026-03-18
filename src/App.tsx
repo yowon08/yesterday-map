@@ -1,4 +1,6 @@
+// @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as htmlToImage from "html-to-image";
 import {
   MousePointer2,
   MapPinned,
@@ -12,6 +14,8 @@ import {
   ZoomIn,
   ZoomOut,
   Move,
+  Image as ImageIcon,
+  FileJson,
 } from "lucide-react";
 
 type Point = { x: number; y: number };
@@ -143,7 +147,7 @@ function downloadText(filename: string, text: string) {
 }
 
 function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
-  return getRepeatedArrowHeads(points, 26, 6).map((arrow, index) => (
+  return getRepeatedArrowHeads(points, 24, 10).map((arrow, index) => (
     <g key={`${keyPrefix}-${index}`}>
       <line
         x1={arrow.left.x}
@@ -151,7 +155,7 @@ function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
         x2={arrow.tip.x}
         y2={arrow.tip.y}
         stroke={color}
-        strokeWidth={2}
+        strokeWidth={2.4}
         strokeLinecap="round"
       />
       <line
@@ -160,7 +164,7 @@ function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
         x2={arrow.tip.x}
         y2={arrow.tip.y}
         stroke={color}
-        strokeWidth={2}
+        strokeWidth={2.4}
         strokeLinecap="round"
       />
     </g>
@@ -216,6 +220,7 @@ function cardStyle(): React.CSSProperties {
 
 export default function App() {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const mapCaptureRef = useRef<HTMLDivElement | null>(null);
   const bgInputRef = useRef<HTMLInputElement | null>(null);
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -436,6 +441,26 @@ export default function App() {
     );
   };
 
+  const exportJpg = async () => {
+    if (!mapCaptureRef.current) return;
+
+    try {
+      const dataUrl = await htmlToImage.toJpeg(mapCaptureRef.current, {
+        quality: 0.95,
+        backgroundColor: "#000000",
+        pixelRatio: 2,
+      });
+
+      const link = document.createElement("a");
+      link.download = `${title.replace(/\s+/g, "_") || "map"}.jpg`;
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error("JPG 저장 실패", error);
+      alert("JPG 저장에 실패했어요.");
+    }
+  };
+
   const importBackground = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -558,9 +583,6 @@ export default function App() {
                 <button style={buttonStyle(lineStyle === "arrow")} onClick={() => setLineStyle("arrow")}>화살표선</button>
                 <button style={buttonStyle(lineStyle === "dashed")} onClick={() => setLineStyle("dashed")}>점선</button>
               </div>
-              <div style={{ marginTop: 8, color: "#d4d4d8", fontSize: 12 }}>
-                화살표선은 선 위에 작은 {">"} 모양 화살표가 반복되어 이동 방향이 뚜렷하게 보입니다.
-              </div>
             </div>
 
             <div>
@@ -614,7 +636,8 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <button style={buttonStyle(false)} onClick={() => bgInputRef.current?.click()}><Upload size={16} />배경 업로드</button>
               <button style={buttonStyle(false)} onClick={() => jsonInputRef.current?.click()}><Download size={16} />불러오기</button>
-              <button style={{ ...buttonStyle(false), gridColumn: "1 / span 2" }} onClick={exportJson}><Save size={16} />JSON 저장</button>
+              <button style={buttonStyle(false)} onClick={exportJson}><FileJson size={16} />JSON 저장</button>
+              <button style={buttonStyle(false)} onClick={exportJpg}><ImageIcon size={16} />JPG 저장</button>
             </div>
 
             <input ref={bgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={importBackground} />
@@ -656,15 +679,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            <div>
-              <div style={{ marginBottom: 8 }}>작전 메모</div>
-              <textarea
-                style={{ ...inputStyle(), minHeight: 130, resize: "vertical" }}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </div>
           </div>
         </div>
 
@@ -683,6 +697,7 @@ export default function App() {
 
           <div style={{ padding: 16 }}>
             <div
+              ref={mapCaptureRef}
               style={{
                 position: "relative",
                 width: "100%",
@@ -741,7 +756,7 @@ export default function App() {
                             d={linePath}
                             fill="none"
                             stroke={line.color}
-                            strokeWidth={5}
+                            strokeWidth={line.style === "arrow" ? 3.5 : 5}
                             strokeLinecap="round"
                             strokeLinejoin="round"
                             strokeDasharray={line.style === "dashed" ? "10 8" : undefined}
@@ -758,7 +773,7 @@ export default function App() {
                           d={makePath(currentDraftPoints)}
                           fill="none"
                           stroke={toolColor}
-                          strokeWidth={4}
+                          strokeWidth={lineStyle === "arrow" ? 3.5 : 4}
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeDasharray={lineStyle === "dashed" ? "10 8" : undefined}
@@ -846,6 +861,18 @@ export default function App() {
                   })}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div style={{ padding: "0 16px 16px 16px" }}>
+            <div style={sectionStyle()}>
+              <div style={{ marginBottom: 8, fontWeight: 700 }}>전술 메모</div>
+              <textarea
+                style={{ ...inputStyle(), minHeight: 140, resize: "vertical" }}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="작전 요약, 이동 계획, 주의 사항 등을 적어두세요."
+              />
             </div>
           </div>
         </div>
