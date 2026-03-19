@@ -292,8 +292,10 @@ export default function App() {
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
   const markerInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [appViewMode, setAppViewMode] = useState<AppViewMode>("edit");
+  const [appViewMode, setAppViewMode] = useState<AppViewMode>("view");
   const isViewMode = appViewMode === "view";
+
+  const [isMobile, setIsMobile] = useState(false);
 
   const [title, setTitle] = useState("예스터데이 전술지도");
   const [background, setBackground] = useState(DEFAULT_BG);
@@ -318,6 +320,16 @@ export default function App() {
   const [suppressClick, setSuppressClick] = useState(false);
 
   const [infoTokenId, setInfoTokenId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 900);
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   useEffect(() => {
     try {
@@ -900,17 +912,35 @@ export default function App() {
                   top: token.y,
                   transform: "translate(-50%, -100%)",
                   touchAction: "none",
+                  pointerEvents: "auto",
+                  zIndex: infoTokenId === token.id ? 45 : 15,
                 }}
-                onPointerDown={(e) => startTokenDrag(e, token)}
+                onPointerDown={(e) => {
+                  if (isViewMode) {
+                    e.stopPropagation();
+                    return;
+                  }
+                  startTokenDrag(e, token);
+                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   setInfoTokenId(token.id);
+
                   if (!isViewMode) {
                     setSelected({ type: "token", id: token.id });
                   }
                 }}
               >
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: isViewMode ? "pointer" : "move" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 4,
+                    cursor: isViewMode ? "pointer" : "move",
+                    pointerEvents: "auto",
+                  }}
+                >
                   <div
                     style={{
                       borderRadius: 999,
@@ -921,6 +951,7 @@ export default function App() {
                       background: token.color,
                       color: getContrastingTextColor(token.color),
                       boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                      pointerEvents: "none",
                     }}
                   >
                     {token.name}
@@ -950,6 +981,7 @@ export default function App() {
                         transform: "rotate(45deg)",
                         border: `2px solid ${!isViewMode && isSelectedToken ? "#ffffff" : "#09090b"}`,
                         background: token.color,
+                        pointerEvents: "none",
                       }}
                     />
                   )}
@@ -1102,26 +1134,69 @@ export default function App() {
           background: "#000",
           color: "#fff",
           fontFamily: "Arial, sans-serif",
+          position: "relative",
         }}
       >
         {mapElement}
+
+        <input
+          ref={jsonInputRef}
+          type="file"
+          accept="application/json"
+          style={{ display: "none" }}
+          onChange={importJson}
+        />
+
+        <div
+          style={{
+            position: "absolute",
+            left: 16,
+            bottom: 16,
+            zIndex: 50,
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <button
+            style={{
+              ...buttonStyle(false),
+              width: "auto",
+              background: "rgba(0,0,0,0.7)",
+              backdropFilter: "blur(6px)",
+              border: "1px solid rgba(255,255,255,0.15)",
+            }}
+            onClick={() => jsonInputRef.current?.click()}
+          >
+            <Download size={16} />
+            JSON 불러오기
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", padding: 16, fontFamily: "Arial, sans-serif" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#000",
+        color: "#fff",
+        padding: isMobile ? 8 : 16,
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <div
         style={{
           maxWidth: 1800,
           margin: "0 auto",
           display: "grid",
-          gridTemplateColumns: "360px minmax(0, 1fr)",
+          gridTemplateColumns: isMobile ? "1fr" : "360px minmax(0, 1fr)",
           gap: 16,
           alignItems: "start",
         }}
       >
-        <div style={cardStyle()}>
+        <div style={{ ...cardStyle(), width: "100%", minWidth: 0 }}>
           <div style={{ padding: 20, borderBottom: "1px solid #27272a", fontWeight: 700, fontSize: 24 }}>예스터데이 전술지도</div>
 
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -1350,7 +1425,7 @@ export default function App() {
           </div>
         </div>
 
-        <div style={cardStyle()}>
+        <div style={{ ...cardStyle(), width: "100%", minWidth: 0 }}>
           <div style={{ padding: 20, borderBottom: "1px solid #27272a", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 24, fontWeight: 700 }}>{title}</div>
@@ -1375,9 +1450,9 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ padding: 16 }}>{mapElement}</div>
+          <div style={{ padding: isMobile ? 8 : 16 }}>{mapElement}</div>
 
-          <div style={{ padding: "0 16px 16px 16px" }}>
+          <div style={{ padding: isMobile ? "0 8px 8px 8px" : "0 16px 16px 16px" }}>
             <div style={sectionStyle()}>
               <div style={{ marginBottom: 8, fontWeight: 700 }}>전술 메모</div>
               <textarea
