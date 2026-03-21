@@ -32,6 +32,7 @@ type Token = {
   color: string;
   note: string;
   sizeScale?: number;
+  
 };
 
 type LineItem = {
@@ -91,7 +92,9 @@ const COLORS = [
 function clampZoom(value: number) {
   return Math.max(0.5, Math.min(3.5, value));
 }
-
+function clampMarkerScale(value: number) {
+  return Math.max(0.35, Math.min(1.4, value));
+}
 function clampMarkerScale(value: number) {
   return Math.max(0.35, Math.min(1.4, value));
 }
@@ -513,19 +516,19 @@ export default function App() {
     const point = getMapPoint(e.clientX, e.clientY);
 
     if (mode === "marker") {
-      const next: Token = {
-        id: Date.now(),
-        name: newTokenName || "캐릭터",
-        x: point.x,
-        y: point.y,
-        color: toolColor,
-        note: "",
-        sizeScale: clampMarkerScale(1 / zoom),
-      };
-      setTokens((prev) => [...prev, next]);
-      setSelected({ type: "token", id: next.id });
-      return;
-    }
+  const next: Token = {
+    id: Date.now(),
+    name: newTokenName || "캐릭터",
+    x: point.x,
+    y: point.y,
+    color: toolColor,
+    note: "",
+    sizeScale: clampMarkerScale(1 / zoom),
+  };
+  setTokens((prev) => [...prev, next]);
+  setSelected({ type: "token", id: next.id });
+  return;
+}
 
     if (mode === "label") {
       const next: LabelItem = {
@@ -1341,67 +1344,114 @@ export default function App() {
                     })}
 
                     {tokens.map((token) => {
-                      const isSelectedToken = selected?.type === "token" && selected.id === token.id;
-                      const markerScale = clampMarkerScale(token.sizeScale ?? 1);
+  const isSelectedToken = selected?.type === "token" && selected.id === token.id;
+  const markerScale = clampMarkerScale(token.sizeScale ?? 1);
 
-                      return (
-                        <div
-                          key={token.id}
-                          data-map-token="true"
-                          style={{
-                            position: "absolute",
-                            left: token.x,
-                            top: token.y,
-                            transform: "translate(-50%, -100%)",
-                          }}
-                          onMouseDown={(e) => startTokenDrag(e, token)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected({ type: "token", id: token.id });
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "center",
-                              gap: 4 * markerScale,
-                              cursor: "move",
-                            }}
-                          >
-                            <div
-                              style={{
-                                borderRadius: 999,
-                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-                                  isSelectedToken ? "#ffffff" : "#09090b"
-                                }`,
-                                padding: `${4 * markerScale}px ${12 * markerScale}px`,
-                                fontSize: 12 * markerScale,
-                                fontWeight: 700,
-                                background: token.color,
-                                color: getContrastingTextColor(token.color),
-                                boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-                                whiteSpace: "nowrap",
-                                lineHeight: 1.1,
-                              }}
-                            >
-                              {token.name}
-                            </div>
-                            <div
-                              style={{
-                                width: 16 * markerScale,
-                                height: 16 * markerScale,
-                                transform: "rotate(45deg)",
-                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-                                  isSelectedToken ? "#ffffff" : "#09090b"
-                                }`,
-                                background: token.color,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
+  return (
+    <div
+      key={token.id}
+      data-map-token="true"
+      style={{
+        position: "absolute",
+        left: token.x,
+        top: token.y,
+        transform: "translate(-50%, -100%)",
+      }}
+      onMouseDown={(e) => startTokenDrag(e, token)}
+      onClick={(e) => {
+        e.stopPropagation();
+        setSelected({ type: "token", id: token.id });
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 4 * markerScale,
+          cursor: "move",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            borderRadius: 999,
+            border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+              isSelectedToken ? "#ffffff" : "#09090b"
+            }`,
+            padding: `${4 * markerScale}px ${12 * markerScale}px`,
+            fontSize: 12 * markerScale,
+            fontWeight: 700,
+            background: token.color,
+            color: getContrastingTextColor(token.color),
+            boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+            whiteSpace: "nowrap",
+            lineHeight: 1.1,
+          }}
+        >
+          {token.name}
+        </div>
+
+        <div
+          style={{
+            width: 16 * markerScale,
+            height: 16 * markerScale,
+            transform: "rotate(45deg)",
+            border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+              isSelectedToken ? "#ffffff" : "#09090b"
+            }`,
+            background: token.color,
+          }}
+        />
+
+        {isSelectedToken && mode === "select" && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute",
+              left: `${48 * markerScale}px`,
+              top: `${8 * markerScale}px`,
+              minWidth: `${220 * markerScale}px`,
+              maxWidth: `${280 * markerScale}px`,
+              padding: `${12 * markerScale}px`,
+              borderRadius: `${14 * markerScale}px`,
+              border: "1px solid rgba(255,255,255,0.16)",
+              background: "rgba(10,10,10,0.94)",
+              color: "#ffffff",
+              boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
+              backdropFilter: "blur(6px)",
+              zIndex: 30,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 13 * markerScale,
+                fontWeight: 800,
+                marginBottom: 6 * markerScale,
+                color: token.color,
+              }}
+            >
+              {token.name}
+            </div>
+
+            <div
+              style={{
+                fontSize: 11 * markerScale,
+                lineHeight: 1.45,
+                color: "#e4e4e7",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {token.note?.trim() ? token.note : "등록된 정보가 없습니다."}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+})}
                   </div>
                 </div>
               </div>
