@@ -32,6 +32,7 @@ type Token = {
   color: string;
   note: string;
   sizeScale?: number;
+  customImage?: string | null;
 };
 
 type LineItem = {
@@ -250,6 +251,22 @@ function cardStyle(): React.CSSProperties {
   };
 }
 
+function iconGhostButtonStyle(): React.CSSProperties {
+  return {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#ffffff",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    padding: 0,
+  };
+}
+
 function getTouchDistance(t1: Touch, t2: Touch) {
   return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
 }
@@ -267,6 +284,7 @@ export default function App() {
   const mapCaptureRef = useRef<HTMLDivElement | null>(null);
   const bgInputRef = useRef<HTMLInputElement | null>(null);
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
+  const markerImageInputRef = useRef<HTMLInputElement | null>(null);
   const didSetInitialViewRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -308,6 +326,9 @@ export default function App() {
 
   const [bgmEnabled, setBgmEnabled] = useState(true);
   const [bgmStarted, setBgmStarted] = useState(false);
+
+  const [customMarkerImage, setCustomMarkerImage] = useState<string | null>(null);
+  const [markerImageTarget, setMarkerImageTarget] = useState<"new" | "selected">("new");
 
   const totalScale = baseScale * zoom;
   const isMobileLayout =
@@ -554,6 +575,7 @@ export default function App() {
         color: toolColor,
         note: "",
         sizeScale: clampMarkerScale(1 / zoom),
+        customImage: customMarkerImage || null,
       };
       setTokens((prev) => [...prev, next]);
       setSelected({ type: "token", id: next.id });
@@ -799,6 +821,35 @@ export default function App() {
     e.target.value = "";
   };
 
+  const updateSelectedTokenCustomImage = (image: string | null) => {
+    if (!selected || selected.type !== "token") return;
+
+    setTokens((prev) =>
+      prev.map((item) =>
+        item.id === selected.id ? { ...item, customImage: image } : item
+      )
+    );
+  };
+
+  const importCustomMarkerImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = String(reader.result || "");
+      if (!image) return;
+
+      if (markerImageTarget === "selected" && selected?.type === "token") {
+        updateSelectedTokenCustomImage(image);
+      } else {
+        setCustomMarkerImage(image);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const importJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1014,6 +1065,58 @@ export default function App() {
             </div>
 
             <div>
+              <div style={{ marginBottom: 8 }}>커스텀 마커</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button
+                  style={buttonStyle(false)}
+                  onClick={() => {
+                    setMarkerImageTarget("new");
+                    markerImageInputRef.current?.click();
+                  }}
+                >
+                  <Upload size={16} />
+                  마커 이미지 업로드
+                </button>
+                <button
+                  style={buttonStyle(false)}
+                  onClick={() => setCustomMarkerImage(null)}
+                >
+                  <X size={16} />
+                  기본 마커로
+                </button>
+              </div>
+
+              <div style={{ marginTop: 8, fontSize: 13, color: "#a1a1aa" }}>
+                업로드한 이미지는 이후 새로 찍는 마커에 적용돼.
+              </div>
+
+              {customMarkerImage && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    border: "1px solid #27272a",
+                    borderRadius: 14,
+                    padding: 10,
+                    background: "#09090b",
+                    display: "flex",
+                    justifyContent: "center",
+                  }}
+                >
+                  <img
+                    src={customMarkerImage}
+                    alt="커스텀 마커 미리보기"
+                    style={{
+                      width: 48,
+                      height: 48,
+                      objectFit: "contain",
+                      display: "block",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
               <div style={{ marginBottom: 8 }}>선 스타일</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <button style={buttonStyle(lineStyle === "solid")} onClick={() => setLineStyle("solid")}>
@@ -1155,6 +1258,13 @@ export default function App() {
               style={{ display: "none" }}
               onChange={importJson}
             />
+            <input
+              ref={markerImageInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={importCustomMarkerImage}
+            />
 
             <div style={sectionStyle()}>
               <div
@@ -1218,12 +1328,58 @@ export default function App() {
                   </div>
 
                   {selected.type === "token" && (
-                    <textarea
-                      style={{ ...inputStyle(), minHeight: 90, resize: "vertical" }}
-                      value={(selectedObject as Token).note}
-                      onChange={(e) => updateSelectedNote(e.target.value)}
-                      placeholder="캐릭터 설명, 상태, 세력, 장비 등"
-                    />
+                    <>
+                      <textarea
+                        style={{ ...inputStyle(), minHeight: 90, resize: "vertical" }}
+                        value={(selectedObject as Token).note}
+                        onChange={(e) => updateSelectedNote(e.target.value)}
+                        placeholder="캐릭터 설명, 상태, 세력, 장비 등"
+                      />
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <button
+                          style={buttonStyle(false)}
+                          onClick={() => {
+                            setMarkerImageTarget("selected");
+                            markerImageInputRef.current?.click();
+                          }}
+                        >
+                          <Upload size={16} />
+                          이미지 변경
+                        </button>
+                        <button
+                          style={buttonStyle(false)}
+                          onClick={() => updateSelectedTokenCustomImage(null)}
+                        >
+                          <X size={16} />
+                          이미지 제거
+                        </button>
+                      </div>
+
+                      {(selectedObject as Token).customImage && (
+                        <div
+                          style={{
+                            border: "1px solid #27272a",
+                            borderRadius: 14,
+                            padding: 10,
+                            background: "#09090b",
+                            display: "flex",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <img
+                            src={(selectedObject as Token).customImage || ""}
+                            alt="선택된 마커 이미지"
+                            style={{
+                              width: 56,
+                              height: 56,
+                              objectFit: "contain",
+                              display: "block",
+                            }}
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -1480,36 +1636,85 @@ export default function App() {
                               position: "relative",
                             }}
                           >
-                            <div
-                              style={{
-                                borderRadius: 999,
-                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-                                  isSelectedToken ? "#ffffff" : "#09090b"
-                                }`,
-                                padding: `${4 * markerScale}px ${12 * markerScale}px`,
-                                fontSize: 12 * markerScale,
-                                fontWeight: 700,
-                                background: token.color,
-                                color: getContrastingTextColor(token.color),
-                                boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-                                whiteSpace: "nowrap",
-                                lineHeight: 1.1,
-                              }}
-                            >
-                              {token.name}
-                            </div>
+                            {token.customImage ? (
+                              <>
+                                <div
+                                  style={{
+                                    padding: `${4 * markerScale}px ${8 * markerScale}px`,
+                                    borderRadius: 999,
+                                    border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                      isSelectedToken ? "#ffffff" : "#09090b"
+                                    }`,
+                                    background: "rgba(10,10,10,0.88)",
+                                    boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                                  }}
+                                >
+                                  <img
+                                    src={token.customImage}
+                                    alt={token.name}
+                                    draggable={false}
+                                    style={{
+                                      width: 40 * markerScale,
+                                      height: 40 * markerScale,
+                                      objectFit: "contain",
+                                      display: "block",
+                                    }}
+                                  />
+                                </div>
 
-                            <div
-                              style={{
-                                width: 16 * markerScale,
-                                height: 16 * markerScale,
-                                transform: "rotate(45deg)",
-                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-                                  isSelectedToken ? "#ffffff" : "#09090b"
-                                }`,
-                                background: token.color,
-                              }}
-                            />
+                                <div
+                                  style={{
+                                    borderRadius: 999,
+                                    border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                      isSelectedToken ? "#ffffff" : "#09090b"
+                                    }`,
+                                    padding: `${3 * markerScale}px ${10 * markerScale}px`,
+                                    fontSize: 11 * markerScale,
+                                    fontWeight: 700,
+                                    background: token.color,
+                                    color: getContrastingTextColor(token.color),
+                                    boxShadow: "0 8px 16px rgba(0,0,0,0.28)",
+                                    whiteSpace: "nowrap",
+                                    lineHeight: 1.1,
+                                  }}
+                                >
+                                  {token.name}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div
+                                  style={{
+                                    borderRadius: 999,
+                                    border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                      isSelectedToken ? "#ffffff" : "#09090b"
+                                    }`,
+                                    padding: `${4 * markerScale}px ${12 * markerScale}px`,
+                                    fontSize: 12 * markerScale,
+                                    fontWeight: 700,
+                                    background: token.color,
+                                    color: getContrastingTextColor(token.color),
+                                    boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                                    whiteSpace: "nowrap",
+                                    lineHeight: 1.1,
+                                  }}
+                                >
+                                  {token.name}
+                                </div>
+
+                                <div
+                                  style={{
+                                    width: 16 * markerScale,
+                                    height: 16 * markerScale,
+                                    transform: "rotate(45deg)",
+                                    border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                      isSelectedToken ? "#ffffff" : "#09090b"
+                                    }`,
+                                    background: token.color,
+                                  }}
+                                />
+                              </>
+                            )}
 
                             {isSelectedToken && mode === "select" && (
                               <div
@@ -1533,13 +1738,42 @@ export default function App() {
                               >
                                 <div
                                   style={{
-                                    fontSize: 13 * markerScale,
-                                    fontWeight: 800,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 8 * markerScale,
                                     marginBottom: 6 * markerScale,
-                                    color: token.color,
                                   }}
                                 >
-                                  {token.name}
+                                  <div
+                                    style={{
+                                      fontSize: 13 * markerScale,
+                                      fontWeight: 800,
+                                      color: token.color,
+                                      lineHeight: 1.2,
+                                      paddingRight: 8 * markerScale,
+                                    }}
+                                  >
+                                    {token.name}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelected(null);
+                                    }}
+                                    style={{
+                                      ...iconGhostButtonStyle(),
+                                      width: 24 * markerScale,
+                                      height: 24 * markerScale,
+                                      fontSize: 12 * markerScale,
+                                      flex: "0 0 auto",
+                                    }}
+                                    aria-label="팝업 닫기"
+                                  >
+                                    ×
+                                  </button>
                                 </div>
 
                                 <div
