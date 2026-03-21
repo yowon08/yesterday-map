@@ -31,6 +31,7 @@ type Token = {
   y: number;
   color: string;
   note: string;
+  sizeScale?: number;
 };
 
 type LineItem = {
@@ -74,11 +75,6 @@ const NATURAL_HEIGHT = 768;
 const STORAGE_KEY = "yesterday-tactical-map-state-v1";
 
 const MOBILE_BREAKPOINT = 900;
-const MOBILE_INITIAL_ZOOM = 1.35;
-const NEW_SAN_DIEGO_CENTER = {
-  x: 640,
-  y: 430,
-};
 
 const COLORS = [
   "#ef4444",
@@ -94,6 +90,10 @@ const COLORS = [
 
 function clampZoom(value: number) {
   return Math.max(0.5, Math.min(3.5, value));
+}
+
+function clampMarkerScale(value: number) {
+  return Math.max(0.35, Math.min(1.4, value));
 }
 
 function makePath(points: Point[]) {
@@ -300,7 +300,14 @@ export default function App() {
       const data = JSON.parse(raw);
       setTitle(data.title || "예스터데이 전술지도");
       setBackground(data.background || DEFAULT_BG);
-      setTokens(Array.isArray(data.tokens) ? data.tokens : []);
+      setTokens(
+        Array.isArray(data.tokens)
+          ? data.tokens.map((token: Token) => ({
+              ...token,
+              sizeScale: clampMarkerScale(token.sizeScale ?? 1),
+            }))
+          : []
+      );
       setLines(Array.isArray(data.lines) ? data.lines : []);
       setLabels(Array.isArray(data.labels) ? data.labels : []);
       setNotes(data.notes || "전술 기록 메모");
@@ -431,26 +438,8 @@ export default function App() {
     setPan(centeredPan);
   };
 
-  const applyInitialView = (forceFit = false) => {
-    const frame = frameRef.current;
-    if (!frame) return;
-
-    const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
-
-    if (!mobile || forceFit) {
-      fitWholeMap(1);
-      return;
-    }
-
-    const nextZoom = MOBILE_INITIAL_ZOOM;
-    const nextTotalScale = baseScale * nextZoom;
-
-    let nextPanX = frame.clientWidth / 2 - NEW_SAN_DIEGO_CENTER.x * nextTotalScale;
-    let nextPanY = frame.clientHeight / 2 - NEW_SAN_DIEGO_CENTER.y * nextTotalScale;
-
-    const clamped = clampPanForScale(nextPanX, nextPanY, nextZoom);
-    setZoom(nextZoom);
-    setPan(clamped);
+  const applyInitialView = () => {
+    fitWholeMap(1);
   };
 
   useEffect(() => {
@@ -469,7 +458,9 @@ export default function App() {
 
     if (!didSetInitialViewRef.current) {
       didSetInitialViewRef.current = true;
-      applyInitialView();
+      requestAnimationFrame(() => {
+        applyInitialView();
+      });
       return;
     }
 
@@ -529,6 +520,7 @@ export default function App() {
         y: point.y,
         color: toolColor,
         note: "",
+        sizeScale: clampMarkerScale(1 / zoom),
       };
       setTokens((prev) => [...prev, next]);
       setSelected({ type: "token", id: next.id });
@@ -772,13 +764,20 @@ export default function App() {
         const data = JSON.parse(String(reader.result || "{}"));
         setTitle(data.title || "예스터데이 전술지도");
         setBackground(data.background || DEFAULT_BG);
-        setTokens(Array.isArray(data.tokens) ? data.tokens : []);
+        setTokens(
+          Array.isArray(data.tokens)
+            ? data.tokens.map((token: Token) => ({
+                ...token,
+                sizeScale: clampMarkerScale(token.sizeScale ?? 1),
+              }))
+            : []
+        );
         setLines(Array.isArray(data.lines) ? data.lines : []);
         setLabels(Array.isArray(data.labels) ? data.labels : []);
         setNotes(data.notes || "전술 기록 메모");
         setDraftLine([]);
         setSelected(null);
-        requestAnimationFrame(() => applyInitialView(true));
+        requestAnimationFrame(() => applyInitialView());
       } catch {
         alert("JSON 불러오기에 실패했어요.");
       }
@@ -825,7 +824,7 @@ export default function App() {
   };
 
   const resetView = () => {
-    applyInitialView(window.innerWidth > MOBILE_BREAKPOINT);
+    applyInitialView();
   };
 
   const changeZoomByButton = (delta: number) => {
@@ -1343,6 +1342,8 @@ export default function App() {
 
                     {tokens.map((token) => {
                       const isSelectedToken = selected?.type === "token" && selected.id === token.id;
+                      const markerScale = clampMarkerScale(token.sizeScale ?? 1);
+
                       return (
                         <div
                           key={token.id}
@@ -1364,31 +1365,36 @@ export default function App() {
                               display: "flex",
                               flexDirection: "column",
                               alignItems: "center",
-                              gap: 4,
+                              gap: 4 * markerScale,
                               cursor: "move",
                             }}
                           >
                             <div
                               style={{
                                 borderRadius: 999,
-                                border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
-                                padding: "4px 12px",
-                                fontSize: 12,
+                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                  isSelectedToken ? "#ffffff" : "#09090b"
+                                }`,
+                                padding: `${4 * markerScale}px ${12 * markerScale}px`,
+                                fontSize: 12 * markerScale,
                                 fontWeight: 700,
                                 background: token.color,
                                 color: getContrastingTextColor(token.color),
                                 boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
                                 whiteSpace: "nowrap",
+                                lineHeight: 1.1,
                               }}
                             >
                               {token.name}
                             </div>
                             <div
                               style={{
-                                width: 16,
-                                height: 16,
+                                width: 16 * markerScale,
+                                height: 16 * markerScale,
                                 transform: "rotate(45deg)",
-                                border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
+                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                  isSelectedToken ? "#ffffff" : "#09090b"
+                                }`,
                                 background: token.color,
                               }}
                             />
