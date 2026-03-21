@@ -16,6 +16,8 @@ import {
   Move,
   Image as ImageIcon,
   FileJson,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 type Point = { x: number; y: number };
@@ -69,16 +71,13 @@ const BGM_SRC = "/bgm.mp3";
 
 const NATURAL_WIDTH = 1365;
 const NATURAL_HEIGHT = 768;
-
 const STORAGE_KEY = "yesterday-tactical-map-state-v1";
 
 const MOBILE_BREAKPOINT = 900;
-const MOBILE_INITIAL_ZOOM = 2.2;
-
-// 뉴샌디에이고 중심부 기준 대략값
+const MOBILE_INITIAL_ZOOM = 1.35;
 const NEW_SAN_DIEGO_CENTER = {
-  x: 620,
-  y: 520,
+  x: 640,
+  y: 430,
 };
 
 const COLORS = [
@@ -94,7 +93,7 @@ const COLORS = [
 ];
 
 function clampZoom(value: number) {
-  return Math.max(0.5, Math.min(3, value));
+  return Math.max(0.5, Math.min(3.5, value));
 }
 
 function makePath(points: Point[]) {
@@ -231,13 +230,37 @@ function cardStyle(): React.CSSProperties {
   };
 }
 
+function getTouchDistance(t1: Touch, t2: Touch) {
+  return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+}
+
+function getTouchCenter(t1: Touch, t2: Touch) {
+  return {
+    x: (t1.clientX + t2.clientX) / 2,
+    y: (t1.clientY + t2.clientY) / 2,
+  };
+}
+
 export default function App() {
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const mapCaptureRef = useRef<HTMLDivElement | null>(null);
   const bgInputRef = useRef<HTMLInputElement | null>(null);
   const jsonInputRef = useRef<HTMLInputElement | null>(null);
-  const didSetInitialMobileViewRef = useRef(false);
-  const bgmRef = useRef<HTMLAudioElement | null>(null);
+  const didSetInitialViewRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const touchModeRef = useRef<"none" | "pan" | "pinch">("none");
+  const touchStartRef = useRef({
+    distance: 0,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    centerX: 0,
+    centerY: 0,
+    mapX: 0,
+    mapY: 0,
+  });
 
   const [title, setTitle] = useState("예스터데이 전술지도");
   const [background, setBackground] = useState(DEFAULT_BG);
@@ -249,6 +272,7 @@ export default function App() {
   const [lineStyle, setLineStyle] = useState<LineStyle>("solid");
   const [notes, setNotes] = useState("전술 기록 메모");
 
+  const [baseScale, setBaseScale] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -262,8 +286,12 @@ export default function App() {
   const [dragging, setDragging] = useState<DraggingState>(null);
   const [suppressClick, setSuppressClick] = useState(false);
 
-  const [bgmStarted, setBgmStarted] = useState(false);
   const [bgmEnabled, setBgmEnabled] = useState(true);
+  const [bgmStarted, setBgmStarted] = useState(false);
+
+  const totalScale = baseScale * zoom;
+  const isMobileLayout =
+    typeof window !== "undefined" ? window.innerWidth <= MOBILE_BREAKPOINT : false;
 
   useEffect(() => {
     try {
@@ -301,61 +329,19 @@ export default function App() {
     return () => window.removeEventListener("mouseup", handleWindowMouseUp);
   }, []);
 
-  const applyInitialMobileView = () => {
-    const el = viewportRef.current;
-    if (!el) return;
-
-    const isMobile = window.innerWidth <= MOBILE_BREAKPOINT;
-    if (!isMobile) return;
-
-    const nextZoom = MOBILE_INITIAL_ZOOM;
-    const centerX = NEW_SAN_DIEGO_CENTER.x;
-    const centerY = NEW_SAN_DIEGO_CENTER.y;
-
-    const nextPanX = el.clientWidth / 2 - centerX * nextZoom;
-    const nextPanY = el.clientHeight / 2 - centerY * nextZoom;
-
-    setZoom(nextZoom);
-    setPan({ x: nextPanX, y: nextPanY });
-  };
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (didSetInitialMobileViewRef.current) return;
-      if (!viewportRef.current) return;
-
-      didSetInitialMobileViewRef.current = true;
-      applyInitialMobileView();
-    }, 60);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
   useEffect(() => {
     const audio = new Audio(BGM_SRC);
     audio.loop = true;
     audio.volume = 0.45;
-    bgmRef.current = audio;
-
-    const tryStartBgm = async () => {
-      if (!bgmEnabled || bgmStarted || !bgmRef.current) return;
-      try {
-        await bgmRef.current.play();
-        setBgmStarted(true);
-      } catch (error) {
-        // 모바일 자동재생 제한 때문에 조용히 대기
-      }
-    };
-
-    tryStartBgm();
+    audioRef.current = audio;
 
     const unlockAndPlay = async () => {
-      if (!bgmEnabled || bgmStarted || !bgmRef.current) return;
+      if (!bgmEnabled || bgmStarted || !audioRef.current) return;
       try {
-        await bgmRef.current.play();
+        await audioRef.current.play();
         setBgmStarted(true);
-      } catch (error) {
-        console.error("배경음악 재생 실패", error);
+      } catch {
+        // 모바일 자동재생 제한 대응
       }
     };
 
@@ -365,15 +351,15 @@ export default function App() {
     return () => {
       window.removeEventListener("pointerdown", unlockAndPlay);
       window.removeEventListener("keydown", unlockAndPlay);
-      if (bgmRef.current) {
-        bgmRef.current.pause();
-        bgmRef.current.currentTime = 0;
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
       }
     };
   }, [bgmEnabled, bgmStarted]);
 
   useEffect(() => {
-    const audio = bgmRef.current;
+    const audio = audioRef.current;
     if (!audio) return;
 
     if (!bgmEnabled) {
@@ -393,20 +379,137 @@ export default function App() {
     return labels.find((item) => item.id === selected.id) ?? null;
   }, [selected, tokens, lines, labels]);
 
+  const updateBaseScale = () => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    const fitted = Math.min(
+      frame.clientWidth / NATURAL_WIDTH,
+      frame.clientHeight / NATURAL_HEIGHT
+    );
+
+    setBaseScale(fitted || 1);
+  };
+
+  const clampPanForScale = (nextPanX: number, nextPanY: number, nextZoom = zoom) => {
+    const frame = frameRef.current;
+    if (!frame) return { x: nextPanX, y: nextPanY };
+
+    const nextTotalScale = baseScale * nextZoom;
+    const scaledWidth = NATURAL_WIDTH * nextTotalScale;
+    const scaledHeight = NATURAL_HEIGHT * nextTotalScale;
+
+    let minPanX = frame.clientWidth - scaledWidth;
+    let minPanY = frame.clientHeight - scaledHeight;
+
+    if (minPanX > 0) minPanX = (frame.clientWidth - scaledWidth) / 2;
+    if (minPanY > 0) minPanY = (frame.clientHeight - scaledHeight) / 2;
+
+    const maxPanX = minPanX > 0 ? minPanX : 0;
+    const maxPanY = minPanY > 0 ? minPanY : 0;
+
+    const x = Math.min(maxPanX, Math.max(minPanX, nextPanX));
+    const y = Math.min(maxPanY, Math.max(minPanY, nextPanY));
+
+    return { x, y };
+  };
+
+  const fitWholeMap = (nextZoom = 1) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    const nextTotalScale = baseScale * nextZoom;
+    const scaledWidth = NATURAL_WIDTH * nextTotalScale;
+    const scaledHeight = NATURAL_HEIGHT * nextTotalScale;
+
+    const centeredPan = {
+      x: (frame.clientWidth - scaledWidth) / 2,
+      y: (frame.clientHeight - scaledHeight) / 2,
+    };
+
+    setZoom(nextZoom);
+    setPan(centeredPan);
+  };
+
+  const applyInitialView = (forceFit = false) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
+
+    if (!mobile || forceFit) {
+      fitWholeMap(1);
+      return;
+    }
+
+    const nextZoom = MOBILE_INITIAL_ZOOM;
+    const nextTotalScale = baseScale * nextZoom;
+
+    let nextPanX = frame.clientWidth / 2 - NEW_SAN_DIEGO_CENTER.x * nextTotalScale;
+    let nextPanY = frame.clientHeight / 2 - NEW_SAN_DIEGO_CENTER.y * nextTotalScale;
+
+    const clamped = clampPanForScale(nextPanX, nextPanY, nextZoom);
+    setZoom(nextZoom);
+    setPan(clamped);
+  };
+
+  useEffect(() => {
+    const run = () => {
+      updateBaseScale();
+    };
+
+    run();
+    window.addEventListener("resize", run);
+    return () => window.removeEventListener("resize", run);
+  }, []);
+
+  useEffect(() => {
+    if (!frameRef.current) return;
+    if (baseScale <= 0) return;
+
+    if (!didSetInitialViewRef.current) {
+      didSetInitialViewRef.current = true;
+      applyInitialView();
+      return;
+    }
+
+    setPan((prev) => clampPanForScale(prev.x, prev.y, zoom));
+  }, [baseScale]);
+
   const currentDraftPoints = draftLine;
 
   const getMapPoint = (clientX: number, clientY: number) => {
-    const el = viewportRef.current;
-    if (!el) return { x: 0, y: 0 };
+    const viewport = viewportRef.current;
+    if (!viewport) return { x: 0, y: 0 };
 
-    const rect = el.getBoundingClientRect();
-    const localX = (clientX - rect.left - pan.x) / zoom;
-    const localY = (clientY - rect.top - pan.y) / zoom;
+    const rect = viewport.getBoundingClientRect();
+    const localX = (clientX - rect.left - pan.x) / totalScale;
+    const localY = (clientY - rect.top - pan.y) / totalScale;
 
     return {
       x: Math.max(0, Math.min(NATURAL_WIDTH, localX)),
       y: Math.max(0, Math.min(NATURAL_HEIGHT, localY)),
     };
+  };
+
+  const zoomAtClientPoint = (nextZoomRaw: number, clientX: number, clientY: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const nextZoom = clampZoom(nextZoomRaw);
+    const rect = viewport.getBoundingClientRect();
+
+    const mapX = (clientX - rect.left - pan.x) / totalScale;
+    const mapY = (clientY - rect.top - pan.y) / totalScale;
+
+    const nextTotalScale = baseScale * nextZoom;
+
+    const nextPanX = clientX - rect.left - mapX * nextTotalScale;
+    const nextPanY = clientY - rect.top - mapY * nextTotalScale;
+
+    const clamped = clampPanForScale(nextPanX, nextPanY, nextZoom);
+    setZoom(nextZoom);
+    setPan(clamped);
   };
 
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -484,7 +587,8 @@ export default function App() {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isPanning) {
-      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+      const next = clampPanForScale(e.clientX - panStart.x, e.clientY - panStart.y, zoom);
+      setPan(next);
       return;
     }
 
@@ -492,17 +596,101 @@ export default function App() {
     const point = getMapPoint(e.clientX, e.clientY);
 
     if (dragging.type === "token") {
-      setTokens((prev) => prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item)));
+      setTokens((prev) =>
+        prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item))
+      );
       return;
     }
 
-    setLabels((prev) => prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item)));
+    setLabels((prev) =>
+      prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item))
+    );
   };
 
   const endPointerAction = () => {
     setDragging(null);
     setIsPanning(false);
     window.setTimeout(() => setSuppressClick(false), 0);
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.0012;
+    zoomAtClientPoint(zoom + delta, e.clientX, e.clientY);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const center = getTouchCenter(t1, t2);
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+
+      const rect = viewport.getBoundingClientRect();
+      const mapX = (center.x - rect.left - pan.x) / totalScale;
+      const mapY = (center.y - rect.top - pan.y) / totalScale;
+
+      touchModeRef.current = "pinch";
+      touchStartRef.current = {
+        distance: getTouchDistance(t1, t2),
+        zoom,
+        panX: pan.x,
+        panY: pan.y,
+        centerX: center.x,
+        centerY: center.y,
+        mapX,
+        mapY,
+      };
+      return;
+    }
+
+    if (e.touches.length === 1 && mode === "select") {
+      const t = e.touches[0];
+      touchModeRef.current = "pan";
+      setIsPanning(true);
+      setSuppressClick(true);
+      setPanStart({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchModeRef.current === "pinch" && e.touches.length === 2) {
+      e.preventDefault();
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const currentDistance = getTouchDistance(t1, t2);
+      const center = getTouchCenter(t1, t2);
+
+      const ratio = currentDistance / Math.max(1, touchStartRef.current.distance);
+      const nextZoom = clampZoom(touchStartRef.current.zoom * ratio);
+      const nextTotalScale = baseScale * nextZoom;
+
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const rect = viewport.getBoundingClientRect();
+
+      const nextPanX = center.x - rect.left - touchStartRef.current.mapX * nextTotalScale;
+      const nextPanY = center.y - rect.top - touchStartRef.current.mapY * nextTotalScale;
+
+      const clamped = clampPanForScale(nextPanX, nextPanY, nextZoom);
+      setZoom(nextZoom);
+      setPan(clamped);
+      return;
+    }
+
+    if (touchModeRef.current === "pan" && e.touches.length === 1 && mode === "select") {
+      e.preventDefault();
+      const t = e.touches[0];
+      const next = clampPanForScale(t.clientX - panStart.x, t.clientY - panStart.y, zoom);
+      setPan(next);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchModeRef.current !== "none") {
+      touchModeRef.current = "none";
+      setIsPanning(false);
+      window.setTimeout(() => setSuppressClick(false), 0);
+    }
   };
 
   const completeLine = () => {
@@ -590,6 +778,7 @@ export default function App() {
         setNotes(data.notes || "전술 기록 메모");
         setDraftLine([]);
         setSelected(null);
+        requestAnimationFrame(() => applyInitialView(true));
       } catch {
         alert("JSON 불러오기에 실패했어요.");
       }
@@ -636,19 +825,18 @@ export default function App() {
   };
 
   const resetView = () => {
-    const isMobile = window.innerWidth <= MOBILE_BREAKPOINT;
+    applyInitialView(window.innerWidth > MOBILE_BREAKPOINT);
+  };
 
-    if (isMobile) {
-      applyInitialMobileView();
-      return;
-    }
-
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+  const changeZoomByButton = (delta: number) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    zoomAtClientPoint(zoom + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
   };
 
   const toggleBgm = async () => {
-    const audio = bgmRef.current;
+    const audio = audioRef.current;
     if (!audio) return;
 
     if (bgmEnabled) {
@@ -668,19 +856,37 @@ export default function App() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#000", color: "#fff", padding: 16, fontFamily: "Arial, sans-serif" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#000",
+        color: "#fff",
+        padding: 16,
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <div
         style={{
           maxWidth: 1400,
           margin: "0 auto",
           display: "grid",
-          gridTemplateColumns: "360px 1fr",
+          gridTemplateColumns: isMobileLayout ? "1fr" : "360px 1fr",
           gap: 16,
           alignItems: "start",
         }}
       >
         <div style={cardStyle()}>
-          <div style={{ padding: 20, borderBottom: "1px solid #27272a", fontWeight: 700, fontSize: 24 }}>예스터데이 전술지도</div>
+          <div
+            style={{
+              padding: 20,
+              borderBottom: "1px solid #27272a",
+              fontWeight: 700,
+              fontSize: 24,
+            }}
+          >
+            예스터데이 전술지도
+          </div>
+
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
             <div>
               <div style={{ marginBottom: 8 }}>지도 제목</div>
@@ -690,28 +896,61 @@ export default function App() {
             <div>
               <div style={{ marginBottom: 8 }}>도구 선택</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <button style={buttonStyle(mode === "select")} onClick={() => setMode("select")}><MousePointer2 size={16} />선택/이동</button>
-                <button style={buttonStyle(mode === "marker")} onClick={() => setMode("marker")}><MapPinned size={16} />마커 찍기</button>
-                <button style={buttonStyle(mode === "line")} onClick={() => setMode("line")}><PencilLine size={16} />선 잇기</button>
-                <button style={buttonStyle(mode === "label")} onClick={() => setMode("label")}><Type size={16} />텍스트</button>
+                <button style={buttonStyle(mode === "select")} onClick={() => setMode("select")}>
+                  <MousePointer2 size={16} />
+                  선택/이동
+                </button>
+                <button style={buttonStyle(mode === "marker")} onClick={() => setMode("marker")}>
+                  <MapPinned size={16} />
+                  마커 찍기
+                </button>
+                <button style={buttonStyle(mode === "line")} onClick={() => setMode("line")}>
+                  <PencilLine size={16} />
+                  선 잇기
+                </button>
+                <button style={buttonStyle(mode === "label")} onClick={() => setMode("label")}>
+                  <Type size={16} />
+                  텍스트
+                </button>
               </div>
             </div>
 
             <div>
               <div style={{ marginBottom: 8 }}>기본 이름</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <input value={newTokenName} onChange={(e) => setNewTokenName(e.target.value)} placeholder="새 마커 이름" style={inputStyle()} />
-                <input value={newLineName} onChange={(e) => setNewLineName(e.target.value)} placeholder="새 선 이름" style={inputStyle()} />
-                <input value={newLabelText} onChange={(e) => setNewLabelText(e.target.value)} placeholder="새 텍스트 내용" style={inputStyle()} />
+                <input
+                  value={newTokenName}
+                  onChange={(e) => setNewTokenName(e.target.value)}
+                  placeholder="새 마커 이름"
+                  style={inputStyle()}
+                />
+                <input
+                  value={newLineName}
+                  onChange={(e) => setNewLineName(e.target.value)}
+                  placeholder="새 선 이름"
+                  style={inputStyle()}
+                />
+                <input
+                  value={newLabelText}
+                  onChange={(e) => setNewLabelText(e.target.value)}
+                  placeholder="새 텍스트 내용"
+                  style={inputStyle()}
+                />
               </div>
             </div>
 
             <div>
               <div style={{ marginBottom: 8 }}>선 스타일</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <button style={buttonStyle(lineStyle === "solid")} onClick={() => setLineStyle("solid")}>실선</button>
-                <button style={buttonStyle(lineStyle === "arrow")} onClick={() => setLineStyle("arrow")}>화살표선</button>
-                <button style={buttonStyle(lineStyle === "dashed")} onClick={() => setLineStyle("dashed")}>점선</button>
+                <button style={buttonStyle(lineStyle === "solid")} onClick={() => setLineStyle("solid")}>
+                  실선
+                </button>
+                <button style={buttonStyle(lineStyle === "arrow")} onClick={() => setLineStyle("arrow")}>
+                  화살표선
+                </button>
+                <button style={buttonStyle(lineStyle === "dashed")} onClick={() => setLineStyle("dashed")}>
+                  점선
+                </button>
               </div>
             </div>
 
@@ -740,74 +979,169 @@ export default function App() {
             <div>
               <div style={{ marginBottom: 8 }}>지도 보기</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <button style={buttonStyle(false)} onClick={() => setZoom((z) => clampZoom(z - 0.2))}><ZoomOut size={16} />축소</button>
-                <button style={buttonStyle(false)} onClick={() => setZoom((z) => clampZoom(z + 0.2))}><ZoomIn size={16} />확대</button>
-                <button style={buttonStyle(false)} onClick={resetView}><Move size={16} />초기화</button>
+                <button style={buttonStyle(false)} onClick={() => changeZoomByButton(-0.2)}>
+                  <ZoomOut size={16} />
+                  축소
+                </button>
+                <button style={buttonStyle(false)} onClick={() => changeZoomByButton(0.2)}>
+                  <ZoomIn size={16} />
+                  확대
+                </button>
+                <button style={buttonStyle(false)} onClick={resetView}>
+                  <Move size={16} />
+                  초기화
+                </button>
               </div>
-              <div style={{ marginTop: 8 }}>배율: {zoom.toFixed(1)}x</div>
+              <div style={{ marginTop: 8 }}>배율: {zoom.toFixed(2)}x</div>
             </div>
 
             <div>
               <div style={{ marginBottom: 8 }}>배경음악</div>
               <button style={buttonStyle(false)} onClick={toggleBgm}>
+                {bgmEnabled ? <VolumeX size={16} /> : <Volume2 size={16} />}
                 {bgmEnabled ? "배경음악 끄기" : "배경음악 켜기"}
               </button>
               <div style={{ marginTop: 8, fontSize: 13, color: "#a1a1aa" }}>
-                모바일에서는 첫 터치 후 재생될 수 있어요.
+                모바일에서는 첫 터치 뒤에 재생될 수 있어.
               </div>
             </div>
 
             {mode === "line" && (
               <div style={sectionStyle()}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
+                >
                   <div>
                     <div style={{ fontWeight: 700 }}>선 작성 중</div>
                     <div style={{ fontSize: 13 }}>지도를 클릭해서 점을 계속 추가하세요.</div>
                   </div>
-                  <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>{currentDraftPoints.length}점</div>
+                  <div
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      background: "#27272a",
+                    }}
+                  >
+                    {currentDraftPoints.length}점
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button style={buttonStyle(false)} onClick={completeLine} disabled={currentDraftPoints.length < 2}><Save size={16} />선 확정</button>
-                  <button style={buttonStyle(false)} onClick={cancelDraftLine}><X size={16} />취소</button>
+                  <button
+                    style={buttonStyle(false)}
+                    onClick={completeLine}
+                    disabled={currentDraftPoints.length < 2}
+                  >
+                    <Save size={16} />
+                    선 확정
+                  </button>
+                  <button style={buttonStyle(false)} onClick={cancelDraftLine}>
+                    <X size={16} />
+                    취소
+                  </button>
                 </div>
               </div>
             )}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <button style={buttonStyle(false)} onClick={() => bgInputRef.current?.click()}><Upload size={16} />배경 업로드</button>
-              <button style={buttonStyle(false)} onClick={() => jsonInputRef.current?.click()}><Download size={16} />불러오기</button>
-              <button style={buttonStyle(false)} onClick={exportJson}><FileJson size={16} />JSON 저장</button>
-              <button style={buttonStyle(false)} onClick={exportJpg}><ImageIcon size={16} />JPG 저장</button>
+              <button style={buttonStyle(false)} onClick={() => bgInputRef.current?.click()}>
+                <Upload size={16} />
+                배경 업로드
+              </button>
+              <button style={buttonStyle(false)} onClick={() => jsonInputRef.current?.click()}>
+                <Download size={16} />
+                불러오기
+              </button>
+              <button style={buttonStyle(false)} onClick={exportJson}>
+                <FileJson size={16} />
+                JSON 저장
+              </button>
+              <button style={buttonStyle(false)} onClick={exportJpg}>
+                <ImageIcon size={16} />
+                JPG 저장
+              </button>
             </div>
 
-            <input ref={bgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={importBackground} />
-            <input ref={jsonInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importJson} />
+            <input
+              ref={bgInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={importBackground}
+            />
+            <input
+              ref={jsonInputRef}
+              type="file"
+              accept="application/json"
+              style={{ display: "none" }}
+              onChange={importJson}
+            />
 
             <div style={sectionStyle()}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 12,
+                }}
+              >
                 <div style={{ fontWeight: 700 }}>선택된 요소</div>
-                {selected && <button style={buttonStyle(false)} onClick={deleteSelected}><Trash2 size={16} />삭제</button>}
+                {selected && (
+                  <button style={buttonStyle(false)} onClick={deleteSelected}>
+                    <Trash2 size={16} />
+                    삭제
+                  </button>
+                )}
               </div>
+
               {!selected || !selectedObject ? (
                 <div>선택된 요소가 없습니다.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a", width: "fit-content" }}>{selected.type}</div>
+                  <div
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      background: "#27272a",
+                      width: "fit-content",
+                    }}
+                  >
+                    {selected.type}
+                  </div>
+
                   <input
                     style={inputStyle()}
-                    value={selected.type === "label" ? (selectedObject as LabelItem).text : (selectedObject as Token | LineItem).name}
+                    value={
+                      selected.type === "label"
+                        ? (selectedObject as LabelItem).text
+                        : (selectedObject as Token | LineItem).name
+                    }
                     onChange={(e) => renameSelected(e.target.value)}
                   />
+
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {COLORS.map((color) => (
                       <button
                         key={color}
                         type="button"
                         onClick={() => recolorSelected(color)}
-                        style={{ width: 28, height: 28, borderRadius: 999, border: "1px solid #3f3f46", background: color, cursor: "pointer" }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 999,
+                          border: "1px solid #3f3f46",
+                          background: color,
+                          cursor: "pointer",
+                        }}
                       />
                     ))}
                   </div>
+
                   {selected.type === "token" && (
                     <textarea
                       style={{ ...inputStyle(), minHeight: 90, resize: "vertical" }}
@@ -823,15 +1157,33 @@ export default function App() {
         </div>
 
         <div style={cardStyle()}>
-          <div style={{ padding: 20, borderBottom: "1px solid #27272a", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div
+            style={{
+              padding: 20,
+              borderBottom: "1px solid #27272a",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
             <div>
               <div style={{ fontSize: 24, fontWeight: 700 }}>{title}</div>
-              <div style={{ marginTop: 6 }}>선택 모드에서 빈 배경을 드래그하면 지도 이동</div>
+              <div style={{ marginTop: 6 }}>
+                선택 모드에서는 드래그 이동, 휠 줌, 모바일에서는 핀치 줌 가능
+              </div>
             </div>
+
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>마커 {tokens.length}</div>
-              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>선 {lines.length}</div>
-              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>텍스트 {labels.length}</div>
+              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>
+                마커 {tokens.length}
+              </div>
+              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>
+                선 {lines.length}
+              </div>
+              <div style={{ padding: "4px 10px", borderRadius: 999, background: "#27272a" }}>
+                텍스트 {labels.length}
+              </div>
             </div>
           </div>
 
@@ -841,8 +1193,9 @@ export default function App() {
               style={{
                 position: "relative",
                 width: "100%",
-                maxWidth: NATURAL_WIDTH,
                 aspectRatio: `${NATURAL_WIDTH} / ${NATURAL_HEIGHT}`,
+                minHeight: isMobileLayout ? "58vh" : "70vh",
+                maxHeight: "80vh",
                 overflow: "hidden",
                 borderRadius: 24,
                 border: "1px solid #27272a",
@@ -851,154 +1204,199 @@ export default function App() {
               }}
             >
               <div
-                ref={viewportRef}
+                ref={frameRef}
                 style={{
                   position: "absolute",
                   inset: 0,
-                  cursor: isPanning ? "grabbing" : mode === "select" ? "grab" : "crosshair",
+                  overflow: "hidden",
                 }}
-                onClick={handleMapClick}
-                onMouseMove={handleMouseMove}
-                onMouseUp={endPointerAction}
-                onMouseDown={startPan}
               >
                 <div
+                  ref={viewportRef}
                   style={{
                     position: "absolute",
-                    left: 0,
-                    top: 0,
-                    width: NATURAL_WIDTH,
-                    height: NATURAL_HEIGHT,
-                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                    transformOrigin: "top left",
+                    inset: 0,
+                    cursor: isPanning ? "grabbing" : mode === "select" ? "grab" : "crosshair",
+                    touchAction: "none",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
                   }}
+                  onClick={handleMapClick}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={endPointerAction}
+                  onMouseDown={startPan}
+                  onWheel={handleWheel}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onTouchCancel={handleTouchEnd}
                 >
-                  <img
-                    src={background}
-                    alt="역극 지도"
-                    draggable={false}
-                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "fill", pointerEvents: "none" }}
-                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      width: NATURAL_WIDTH,
+                      height: NATURAL_HEIGHT,
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${totalScale})`,
+                      transformOrigin: "top left",
+                    }}
+                  >
+                    <img
+                      src={background}
+                      alt="역극 지도"
+                      draggable={false}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "fill",
+                        pointerEvents: "none",
+                      }}
+                    />
 
-                  <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox={`0 0 ${NATURAL_WIDTH} ${NATURAL_HEIGHT}`}>
-                    {lines.map((line) => {
-                      const linePath = makePath(line.points);
-                      return (
-                        <g
-                          key={line.id}
-                          data-map-line="true"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected({ type: "line", id: line.id });
-                          }}
-                        >
+                    <svg
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                      viewBox={`0 0 ${NATURAL_WIDTH} ${NATURAL_HEIGHT}`}
+                    >
+                      {lines.map((line) => {
+                        const linePath = makePath(line.points);
+                        return (
+                          <g
+                            key={line.id}
+                            data-map-line="true"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelected({ type: "line", id: line.id });
+                            }}
+                          >
+                            <path
+                              d={linePath}
+                              fill="none"
+                              stroke={line.color}
+                              strokeWidth={line.style === "arrow" ? 3.5 : 5}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeDasharray={line.style === "dashed" ? "10 8" : undefined}
+                            />
+                            {line.style === "arrow"
+                              ? renderArrowMarkers(line.points, line.color, `${line.id}-arrow`)
+                              : null}
+                            <path d={linePath} fill="none" stroke="transparent" strokeWidth={18} />
+                          </g>
+                        );
+                      })}
+
+                      {currentDraftPoints.length >= 2 ? (
+                        <>
                           <path
-                            d={linePath}
+                            d={makePath(currentDraftPoints)}
                             fill="none"
-                            stroke={line.color}
-                            strokeWidth={line.style === "arrow" ? 3.5 : 5}
+                            stroke={toolColor}
+                            strokeWidth={lineStyle === "arrow" ? 3.5 : 4}
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            strokeDasharray={line.style === "dashed" ? "10 8" : undefined}
+                            strokeDasharray={lineStyle === "dashed" ? "10 8" : undefined}
                           />
-                          {line.style === "arrow" ? renderArrowMarkers(line.points, line.color, `${line.id}-arrow`) : null}
-                          <path d={linePath} fill="none" stroke="transparent" strokeWidth={18} />
-                        </g>
+                          {lineStyle === "arrow"
+                            ? renderArrowMarkers(currentDraftPoints, toolColor, "draft-arrow")
+                            : null}
+                        </>
+                      ) : null}
+
+                      {currentDraftPoints.map((point, index) => (
+                        <circle key={index} cx={point.x} cy={point.y} r={5} fill={toolColor} />
+                      ))}
+                    </svg>
+
+                    {labels.map((label) => {
+                      const isSelectedLabel = selected?.type === "label" && selected.id === label.id;
+                      return (
+                        <div
+                          key={label.id}
+                          data-map-label="true"
+                          style={{
+                            position: "absolute",
+                            left: label.x,
+                            top: label.y,
+                            transform: "translate(-50%, -50%)",
+                            color: "#ffffff",
+                            background: "rgba(10,10,10,0.6)",
+                            padding: "4px 8px",
+                            borderRadius: 8,
+                            fontSize: 14,
+                            fontWeight: 700,
+                            boxShadow: isSelectedLabel ? "0 0 0 2px #fff" : undefined,
+                            cursor: "move",
+                          }}
+                          onMouseDown={(e) => startLabelDrag(e, label)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected({ type: "label", id: label.id });
+                          }}
+                        >
+                          {label.text}
+                        </div>
                       );
                     })}
 
-                    {currentDraftPoints.length >= 2 ? (
-                      <>
-                        <path
-                          d={makePath(currentDraftPoints)}
-                          fill="none"
-                          stroke={toolColor}
-                          strokeWidth={lineStyle === "arrow" ? 3.5 : 4}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeDasharray={lineStyle === "dashed" ? "10 8" : undefined}
-                        />
-                        {lineStyle === "arrow" ? renderArrowMarkers(currentDraftPoints, toolColor, "draft-arrow") : null}
-                      </>
-                    ) : null}
-
-                    {currentDraftPoints.map((point, index) => (
-                      <circle key={index} cx={point.x} cy={point.y} r={5} fill={toolColor} />
-                    ))}
-                  </svg>
-
-                  {labels.map((label) => {
-                    const isSelectedLabel = selected?.type === "label" && selected.id === label.id;
-                    return (
-                      <div
-                        key={label.id}
-                        data-map-label="true"
-                        style={{
-                          position: "absolute",
-                          left: label.x,
-                          top: label.y,
-                          transform: "translate(-50%, -50%)",
-                          color: "#ffffff",
-                          background: "rgba(10,10,10,0.6)",
-                          padding: "4px 8px",
-                          borderRadius: 8,
-                          fontSize: 14,
-                          fontWeight: 700,
-                          boxShadow: isSelectedLabel ? "0 0 0 2px #fff" : undefined,
-                          cursor: "move",
-                        }}
-                        onMouseDown={(e) => startLabelDrag(e, label)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelected({ type: "label", id: label.id });
-                        }}
-                      >
-                        {label.text}
-                      </div>
-                    );
-                  })}
-
-                  {tokens.map((token) => {
-                    const isSelectedToken = selected?.type === "token" && selected.id === token.id;
-                    return (
-                      <div
-                        key={token.id}
-                        data-map-token="true"
-                        style={{ position: "absolute", left: token.x, top: token.y, transform: "translate(-50%, -100%)" }}
-                        onMouseDown={(e) => startTokenDrag(e, token)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelected({ type: "token", id: token.id });
-                        }}
-                      >
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "move" }}>
+                    {tokens.map((token) => {
+                      const isSelectedToken = selected?.type === "token" && selected.id === token.id;
+                      return (
+                        <div
+                          key={token.id}
+                          data-map-token="true"
+                          style={{
+                            position: "absolute",
+                            left: token.x,
+                            top: token.y,
+                            transform: "translate(-50%, -100%)",
+                          }}
+                          onMouseDown={(e) => startTokenDrag(e, token)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected({ type: "token", id: token.id });
+                          }}
+                        >
                           <div
                             style={{
-                              borderRadius: 999,
-                              border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
-                              padding: "4px 12px",
-                              fontSize: 12,
-                              fontWeight: 700,
-                              background: token.color,
-                              color: getContrastingTextColor(token.color),
-                              boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              gap: 4,
+                              cursor: "move",
                             }}
                           >
-                            {token.name}
+                            <div
+                              style={{
+                                borderRadius: 999,
+                                border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
+                                padding: "4px 12px",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                background: token.color,
+                                color: getContrastingTextColor(token.color),
+                                boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {token.name}
+                            </div>
+                            <div
+                              style={{
+                                width: 16,
+                                height: 16,
+                                transform: "rotate(45deg)",
+                                border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
+                                background: token.color,
+                              }}
+                            />
                           </div>
-                          <div
-                            style={{
-                              width: 16,
-                              height: 16,
-                              transform: "rotate(45deg)",
-                              border: `2px solid ${isSelectedToken ? "#ffffff" : "#09090b"}`,
-                              background: token.color,
-                            }}
-                          />
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
