@@ -32,7 +32,6 @@ type Token = {
   color: string;
   note: string;
   sizeScale?: number;
-  
 };
 
 type LineItem = {
@@ -41,6 +40,7 @@ type LineItem = {
   color: string;
   points: Point[];
   style: LineStyle;
+  sizeScale?: number;
 };
 
 type LabelItem = {
@@ -74,7 +74,6 @@ const BGM_SRC = "/bgm.mp3";
 const NATURAL_WIDTH = 1365;
 const NATURAL_HEIGHT = 768;
 const STORAGE_KEY = "yesterday-tactical-map-state-v1";
-
 const MOBILE_BREAKPOINT = 900;
 
 const COLORS = [
@@ -92,11 +91,13 @@ const COLORS = [
 function clampZoom(value: number) {
   return Math.max(0.5, Math.min(3.5, value));
 }
+
 function clampMarkerScale(value: number) {
   return Math.max(0.35, Math.min(1.4, value));
 }
-function clampMarkerScale(value: number) {
-  return Math.max(0.35, Math.min(1.4, value));
+
+function clampLineScale(value: number) {
+  return Math.max(0.35, Math.min(1.6, value));
 }
 
 function makePath(points: Point[]) {
@@ -109,6 +110,7 @@ function getContrastingTextColor(bg: string) {
 
 function getArrowHead(start: Point, end: Point, size = 7): ArrowHead | null {
   if (start.x === end.x && start.y === end.y) return null;
+
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
   return {
     tip: end,
@@ -141,8 +143,12 @@ function getRepeatedArrowHeads(points: Point[], spacing = 30, size = 7) {
     for (let j = 1; j <= count; j += 1) {
       const dist = Math.min(j * spacing, length - 2);
       if (dist <= 5) continue;
+
       const tip = { x: start.x + ux * dist, y: start.y + uy * dist };
-      const tail = { x: tip.x - ux * size * 1.8, y: tip.y - uy * size * 1.8 };
+      const tail = {
+        x: tip.x - ux * size * 1.8,
+        y: tip.y - uy * size * 1.8,
+      };
       const arrow = getArrowHead(tail, tip, size);
       if (arrow) arrows.push(arrow);
     }
@@ -152,7 +158,9 @@ function getRepeatedArrowHeads(points: Point[], spacing = 30, size = 7) {
 }
 
 function downloadText(filename: string, text: string) {
-  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const blob = new Blob([text], {
+    type: "application/json;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -161,8 +169,17 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
-  return getRepeatedArrowHeads(points, 24, 10).map((arrow, index) => (
+function renderArrowMarkers(
+  points: Point[],
+  color: string,
+  keyPrefix: string,
+  sizeScale = 1
+) {
+  const spacing = 24 * sizeScale;
+  const arrowSize = 10 * sizeScale;
+  const stroke = Math.max(1.2, 2.4 * sizeScale);
+
+  return getRepeatedArrowHeads(points, spacing, arrowSize).map((arrow, index) => (
     <g key={`${keyPrefix}-${index}`}>
       <line
         x1={arrow.left.x}
@@ -170,7 +187,7 @@ function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
         x2={arrow.tip.x}
         y2={arrow.tip.y}
         stroke={color}
-        strokeWidth={2.4}
+        strokeWidth={stroke}
         strokeLinecap="round"
       />
       <line
@@ -179,7 +196,7 @@ function renderArrowMarkers(points: Point[], color: string, keyPrefix: string) {
         x2={arrow.tip.x}
         y2={arrow.tip.y}
         stroke={color}
-        strokeWidth={2.4}
+        strokeWidth={stroke}
         strokeLinecap="round"
       />
     </g>
@@ -300,9 +317,11 @@ export default function App() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
+
       const data = JSON.parse(raw);
       setTitle(data.title || "예스터데이 전술지도");
       setBackground(data.background || DEFAULT_BG);
+
       setTokens(
         Array.isArray(data.tokens)
           ? data.tokens.map((token: Token) => ({
@@ -311,7 +330,16 @@ export default function App() {
             }))
           : []
       );
-      setLines(Array.isArray(data.lines) ? data.lines : []);
+
+      setLines(
+        Array.isArray(data.lines)
+          ? data.lines.map((line: LineItem) => ({
+              ...line,
+              sizeScale: clampLineScale(line.sizeScale ?? 1),
+            }))
+          : []
+      );
+
       setLabels(Array.isArray(data.labels) ? data.labels : []);
       setNotes(data.notes || "전술 기록 메모");
     } catch (error) {
@@ -351,7 +379,7 @@ export default function App() {
         await audioRef.current.play();
         setBgmStarted(true);
       } catch {
-        // 모바일 자동재생 제한 대응
+        //
       }
     };
 
@@ -361,6 +389,7 @@ export default function App() {
     return () => {
       window.removeEventListener("pointerdown", unlockAndPlay);
       window.removeEventListener("keydown", unlockAndPlay);
+
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
@@ -384,8 +413,12 @@ export default function App() {
 
   const selectedObject = useMemo(() => {
     if (!selected) return null;
-    if (selected.type === "token") return tokens.find((item) => item.id === selected.id) ?? null;
-    if (selected.type === "line") return lines.find((item) => item.id === selected.id) ?? null;
+    if (selected.type === "token") {
+      return tokens.find((item) => item.id === selected.id) ?? null;
+    }
+    if (selected.type === "line") {
+      return lines.find((item) => item.id === selected.id) ?? null;
+    }
     return labels.find((item) => item.id === selected.id) ?? null;
   }, [selected, tokens, lines, labels]);
 
@@ -470,8 +503,6 @@ export default function App() {
     setPan((prev) => clampPanForScale(prev.x, prev.y, zoom));
   }, [baseScale]);
 
-  const currentDraftPoints = draftLine;
-
   const getMapPoint = (clientX: number, clientY: number) => {
     const viewport = viewportRef.current;
     if (!viewport) return { x: 0, y: 0 };
@@ -497,7 +528,6 @@ export default function App() {
     const mapY = (clientY - rect.top - pan.y) / totalScale;
 
     const nextTotalScale = baseScale * nextZoom;
-
     const nextPanX = clientX - rect.left - mapX * nextTotalScale;
     const nextPanY = clientY - rect.top - mapY * nextTotalScale;
 
@@ -516,19 +546,19 @@ export default function App() {
     const point = getMapPoint(e.clientX, e.clientY);
 
     if (mode === "marker") {
-  const next: Token = {
-    id: Date.now(),
-    name: newTokenName || "캐릭터",
-    x: point.x,
-    y: point.y,
-    color: toolColor,
-    note: "",
-    sizeScale: clampMarkerScale(1 / zoom),
-  };
-  setTokens((prev) => [...prev, next]);
-  setSelected({ type: "token", id: next.id });
-  return;
-}
+      const next: Token = {
+        id: Date.now(),
+        name: newTokenName || "캐릭터",
+        x: point.x,
+        y: point.y,
+        color: toolColor,
+        note: "",
+        sizeScale: clampMarkerScale(1 / zoom),
+      };
+      setTokens((prev) => [...prev, next]);
+      setSelected({ type: "token", id: next.id });
+      return;
+    }
 
     if (mode === "label") {
       const next: LabelItem = {
@@ -577,7 +607,10 @@ export default function App() {
 
     setIsPanning(true);
     setSuppressClick(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    setPanStart({
+      x: e.clientX - pan.x,
+      y: e.clientY - pan.y,
+    });
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -592,13 +625,17 @@ export default function App() {
 
     if (dragging.type === "token") {
       setTokens((prev) =>
-        prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item))
+        prev.map((item) =>
+          item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item
+        )
       );
       return;
     }
 
     setLabels((prev) =>
-      prev.map((item) => (item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item))
+      prev.map((item) =>
+        item.id === dragging.id ? { ...item, x: point.x, y: point.y } : item
+      )
     );
   };
 
@@ -644,13 +681,17 @@ export default function App() {
       touchModeRef.current = "pan";
       setIsPanning(true);
       setSuppressClick(true);
-      setPanStart({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+      setPanStart({
+        x: t.clientX - pan.x,
+        y: t.clientY - pan.y,
+      });
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (touchModeRef.current === "pinch" && e.touches.length === 2) {
       e.preventDefault();
+
       const [t1, t2] = [e.touches[0], e.touches[1]];
       const currentDistance = getTouchDistance(t1, t2);
       const center = getTouchCenter(t1, t2);
@@ -661,8 +702,8 @@ export default function App() {
 
       const viewport = viewportRef.current;
       if (!viewport) return;
-      const rect = viewport.getBoundingClientRect();
 
+      const rect = viewport.getBoundingClientRect();
       const nextPanX = center.x - rect.left - touchStartRef.current.mapX * nextTotalScale;
       const nextPanY = center.y - rect.top - touchStartRef.current.mapY * nextTotalScale;
 
@@ -697,6 +738,7 @@ export default function App() {
       color: toolColor,
       points: draftLine,
       style: lineStyle,
+      sizeScale: clampLineScale(1 / zoom),
     };
 
     setLines((prev) => [...prev, next]);
@@ -767,6 +809,7 @@ export default function App() {
         const data = JSON.parse(String(reader.result || "{}"));
         setTitle(data.title || "예스터데이 전술지도");
         setBackground(data.background || DEFAULT_BG);
+
         setTokens(
           Array.isArray(data.tokens)
             ? data.tokens.map((token: Token) => ({
@@ -775,16 +818,29 @@ export default function App() {
               }))
             : []
         );
-        setLines(Array.isArray(data.lines) ? data.lines : []);
+
+        setLines(
+          Array.isArray(data.lines)
+            ? data.lines.map((line: LineItem) => ({
+                ...line,
+                sizeScale: clampLineScale(line.sizeScale ?? 1),
+              }))
+            : []
+        );
+
         setLabels(Array.isArray(data.labels) ? data.labels : []);
         setNotes(data.notes || "전술 기록 메모");
         setDraftLine([]);
         setSelected(null);
-        requestAnimationFrame(() => applyInitialView());
+
+        requestAnimationFrame(() => {
+          applyInitialView();
+        });
       } catch {
         alert("JSON 불러오기에 실패했어요.");
       }
     };
+
     reader.readAsText(file, "utf-8");
     e.target.value = "";
   };
@@ -793,37 +849,52 @@ export default function App() {
     if (!selected) return;
 
     if (selected.type === "token") {
-      setTokens((prev) => prev.map((item) => (item.id === selected.id ? { ...item, name: value } : item)));
+      setTokens((prev) =>
+        prev.map((item) => (item.id === selected.id ? { ...item, name: value } : item))
+      );
       return;
     }
 
     if (selected.type === "line") {
-      setLines((prev) => prev.map((item) => (item.id === selected.id ? { ...item, name: value } : item)));
+      setLines((prev) =>
+        prev.map((item) => (item.id === selected.id ? { ...item, name: value } : item))
+      );
       return;
     }
 
-    setLabels((prev) => prev.map((item) => (item.id === selected.id ? { ...item, text: value } : item)));
+    setLabels((prev) =>
+      prev.map((item) => (item.id === selected.id ? { ...item, text: value } : item))
+    );
   };
 
   const recolorSelected = (value: string) => {
     if (!selected) return;
 
     if (selected.type === "token") {
-      setTokens((prev) => prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item)));
+      setTokens((prev) =>
+        prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item))
+      );
       return;
     }
 
     if (selected.type === "line") {
-      setLines((prev) => prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item)));
+      setLines((prev) =>
+        prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item))
+      );
       return;
     }
 
-    setLabels((prev) => prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item)));
+    setLabels((prev) =>
+      prev.map((item) => (item.id === selected.id ? { ...item, color: value } : item))
+    );
   };
 
   const updateSelectedNote = (value: string) => {
     if (!selected || selected.type !== "token") return;
-    setTokens((prev) => prev.map((item) => (item.id === selected.id ? { ...item, note: value } : item)));
+
+    setTokens((prev) =>
+      prev.map((item) => (item.id === selected.id ? { ...item, note: value } : item))
+    );
   };
 
   const resetView = () => {
@@ -833,6 +904,7 @@ export default function App() {
   const changeZoomByButton = (delta: number) => {
     const frame = frameRef.current;
     if (!frame) return;
+
     const rect = frame.getBoundingClientRect();
     zoomAtClientPoint(zoom + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
   };
@@ -1029,14 +1101,15 @@ export default function App() {
                       background: "#27272a",
                     }}
                   >
-                    {currentDraftPoints.length}점
+                    {draftLine.length}점
                   </div>
                 </div>
+
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     style={buttonStyle(false)}
                     onClick={completeLine}
-                    disabled={currentDraftPoints.length < 2}
+                    disabled={draftLine.length < 2}
                   >
                     <Save size={16} />
                     선 확정
@@ -1259,11 +1332,25 @@ export default function App() {
                     />
 
                     <svg
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: "100%",
+                        height: "100%",
+                      }}
                       viewBox={`0 0 ${NATURAL_WIDTH} ${NATURAL_HEIGHT}`}
                     >
                       {lines.map((line) => {
                         const linePath = makePath(line.points);
+                        const lineScale = clampLineScale(line.sizeScale ?? 1);
+                        const baseStroke = line.style === "arrow" ? 3.5 : 5;
+                        const strokeWidth = Math.max(1.4, baseStroke * lineScale);
+                        const hitWidth = Math.max(12, 18 * lineScale);
+                        const dashArray =
+                          line.style === "dashed"
+                            ? `${10 * lineScale} ${8 * lineScale}`
+                            : undefined;
+
                         return (
                           <g
                             key={line.id}
@@ -1277,43 +1364,62 @@ export default function App() {
                               d={linePath}
                               fill="none"
                               stroke={line.color}
-                              strokeWidth={line.style === "arrow" ? 3.5 : 5}
+                              strokeWidth={strokeWidth}
                               strokeLinecap="round"
                               strokeLinejoin="round"
-                              strokeDasharray={line.style === "dashed" ? "10 8" : undefined}
+                              strokeDasharray={dashArray}
                             />
                             {line.style === "arrow"
-                              ? renderArrowMarkers(line.points, line.color, `${line.id}-arrow`)
+                              ? renderArrowMarkers(
+                                  line.points,
+                                  line.color,
+                                  `${line.id}-arrow`,
+                                  lineScale
+                                )
                               : null}
-                            <path d={linePath} fill="none" stroke="transparent" strokeWidth={18} />
+                            <path d={linePath} fill="none" stroke="transparent" strokeWidth={hitWidth} />
                           </g>
                         );
                       })}
 
-                      {currentDraftPoints.length >= 2 ? (
+                      {draftLine.length >= 2 ? (
                         <>
                           <path
-                            d={makePath(currentDraftPoints)}
+                            d={makePath(draftLine)}
                             fill="none"
                             stroke={toolColor}
-                            strokeWidth={lineStyle === "arrow" ? 3.5 : 4}
+                            strokeWidth={Math.max(
+                              1.4,
+                              (lineStyle === "arrow" ? 3.5 : 4) * clampLineScale(1 / zoom)
+                            )}
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            strokeDasharray={lineStyle === "dashed" ? "10 8" : undefined}
+                            strokeDasharray={
+                              lineStyle === "dashed"
+                                ? `${10 * clampLineScale(1 / zoom)} ${8 * clampLineScale(1 / zoom)}`
+                                : undefined
+                            }
                           />
                           {lineStyle === "arrow"
-                            ? renderArrowMarkers(currentDraftPoints, toolColor, "draft-arrow")
+                            ? renderArrowMarkers(
+                                draftLine,
+                                toolColor,
+                                "draft-arrow",
+                                clampLineScale(1 / zoom)
+                              )
                             : null}
                         </>
                       ) : null}
 
-                      {currentDraftPoints.map((point, index) => (
+                      {draftLine.map((point, index) => (
                         <circle key={index} cx={point.x} cy={point.y} r={5} fill={toolColor} />
                       ))}
                     </svg>
 
                     {labels.map((label) => {
-                      const isSelectedLabel = selected?.type === "label" && selected.id === label.id;
+                      const isSelectedLabel =
+                        selected?.type === "label" && selected.id === label.id;
+
                       return (
                         <div
                           key={label.id}
@@ -1344,114 +1450,115 @@ export default function App() {
                     })}
 
                     {tokens.map((token) => {
-  const isSelectedToken = selected?.type === "token" && selected.id === token.id;
-  const markerScale = clampMarkerScale(token.sizeScale ?? 1);
+                      const isSelectedToken =
+                        selected?.type === "token" && selected.id === token.id;
+                      const markerScale = clampMarkerScale(token.sizeScale ?? 1);
 
-  return (
-    <div
-      key={token.id}
-      data-map-token="true"
-      style={{
-        position: "absolute",
-        left: token.x,
-        top: token.y,
-        transform: "translate(-50%, -100%)",
-      }}
-      onMouseDown={(e) => startTokenDrag(e, token)}
-      onClick={(e) => {
-        e.stopPropagation();
-        setSelected({ type: "token", id: token.id });
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 4 * markerScale,
-          cursor: "move",
-          position: "relative",
-        }}
-      >
-        <div
-          style={{
-            borderRadius: 999,
-            border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-              isSelectedToken ? "#ffffff" : "#09090b"
-            }`,
-            padding: `${4 * markerScale}px ${12 * markerScale}px`,
-            fontSize: 12 * markerScale,
-            fontWeight: 700,
-            background: token.color,
-            color: getContrastingTextColor(token.color),
-            boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-            whiteSpace: "nowrap",
-            lineHeight: 1.1,
-          }}
-        >
-          {token.name}
-        </div>
+                      return (
+                        <div
+                          key={token.id}
+                          data-map-token="true"
+                          style={{
+                            position: "absolute",
+                            left: token.x,
+                            top: token.y,
+                            transform: "translate(-50%, -100%)",
+                          }}
+                          onMouseDown={(e) => startTokenDrag(e, token)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected({ type: "token", id: token.id });
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              gap: 4 * markerScale,
+                              cursor: "move",
+                              position: "relative",
+                            }}
+                          >
+                            <div
+                              style={{
+                                borderRadius: 999,
+                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                  isSelectedToken ? "#ffffff" : "#09090b"
+                                }`,
+                                padding: `${4 * markerScale}px ${12 * markerScale}px`,
+                                fontSize: 12 * markerScale,
+                                fontWeight: 700,
+                                background: token.color,
+                                color: getContrastingTextColor(token.color),
+                                boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+                                whiteSpace: "nowrap",
+                                lineHeight: 1.1,
+                              }}
+                            >
+                              {token.name}
+                            </div>
 
-        <div
-          style={{
-            width: 16 * markerScale,
-            height: 16 * markerScale,
-            transform: "rotate(45deg)",
-            border: `${Math.max(1.5, 2 * markerScale)}px solid ${
-              isSelectedToken ? "#ffffff" : "#09090b"
-            }`,
-            background: token.color,
-          }}
-        />
+                            <div
+                              style={{
+                                width: 16 * markerScale,
+                                height: 16 * markerScale,
+                                transform: "rotate(45deg)",
+                                border: `${Math.max(1.5, 2 * markerScale)}px solid ${
+                                  isSelectedToken ? "#ffffff" : "#09090b"
+                                }`,
+                                background: token.color,
+                              }}
+                            />
 
-        {isSelectedToken && mode === "select" && (
-          <div
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "absolute",
-              left: `${48 * markerScale}px`,
-              top: `${8 * markerScale}px`,
-              minWidth: `${220 * markerScale}px`,
-              maxWidth: `${280 * markerScale}px`,
-              padding: `${12 * markerScale}px`,
-              borderRadius: `${14 * markerScale}px`,
-              border: "1px solid rgba(255,255,255,0.16)",
-              background: "rgba(10,10,10,0.94)",
-              color: "#ffffff",
-              boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
-              backdropFilter: "blur(6px)",
-              zIndex: 30,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 13 * markerScale,
-                fontWeight: 800,
-                marginBottom: 6 * markerScale,
-                color: token.color,
-              }}
-            >
-              {token.name}
-            </div>
+                            {isSelectedToken && mode === "select" && (
+                              <div
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  position: "absolute",
+                                  left: `${48 * markerScale}px`,
+                                  top: `${8 * markerScale}px`,
+                                  minWidth: `${220 * markerScale}px`,
+                                  maxWidth: `${280 * markerScale}px`,
+                                  padding: `${12 * markerScale}px`,
+                                  borderRadius: `${14 * markerScale}px`,
+                                  border: "1px solid rgba(255,255,255,0.16)",
+                                  background: "rgba(10,10,10,0.94)",
+                                  color: "#ffffff",
+                                  boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
+                                  backdropFilter: "blur(6px)",
+                                  zIndex: 30,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: 13 * markerScale,
+                                    fontWeight: 800,
+                                    marginBottom: 6 * markerScale,
+                                    color: token.color,
+                                  }}
+                                >
+                                  {token.name}
+                                </div>
 
-            <div
-              style={{
-                fontSize: 11 * markerScale,
-                lineHeight: 1.45,
-                color: "#e4e4e7",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {token.note?.trim() ? token.note : "등록된 정보가 없습니다."}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-})}
+                                <div
+                                  style={{
+                                    fontSize: 11 * markerScale,
+                                    lineHeight: 1.45,
+                                    color: "#e4e4e7",
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {token.note?.trim() ? token.note : "등록된 정보가 없습니다."}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
