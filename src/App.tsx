@@ -75,6 +75,7 @@ const BGM_SRC = "/bgm.mp3";
 const NATURAL_WIDTH = 1365;
 const NATURAL_HEIGHT = 768;
 const STORAGE_KEY = "yesterday-tactical-map-state-v1";
+const GITHUB_CONFIG_STORAGE_KEY = "yesterday-tactical-map-github-config-v1";
 const MOBILE_BREAKPOINT = 900;
 
 const COLORS = [
@@ -278,6 +279,47 @@ function getTouchCenter(t1: Touch, t2: Touch) {
   };
 }
 
+function encodeBase64Utf8(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+async function githubRequestJson(url: string, token: string, init?: RequestInit) {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
+
+  const text = await res.text();
+  let data: any = null;
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const message = data?.message || `GitHub 요청 실패 (${res.status})`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
 export default function App() {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -330,6 +372,15 @@ export default function App() {
   const [customMarkerImage, setCustomMarkerImage] = useState<string | null>(null);
   const [markerImageTarget, setMarkerImageTarget] = useState<"new" | "selected">("new");
 
+  const [githubOwner, setGithubOwner] = useState("");
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubBranch, setGithubBranch] = useState("main");
+  const [githubFilePath, setGithubFilePath] = useState("public/map-data.json");
+  const [githubToken, setGithubToken] = useState("");
+  const [rememberGithubConfig, setRememberGithubConfig] = useState(true);
+  const [githubUploading, setGithubUploading] = useState(false);
+  const [githubStatus, setGithubStatus] = useState("");
+
   const totalScale = baseScale * zoom;
   const isMobileLayout =
     typeof window !== "undefined" ? window.innerWidth <= MOBILE_BREAKPOINT : false;
@@ -376,6 +427,50 @@ export default function App() {
       console.error("로컬 저장 실패", error);
     }
   }, [title, background, tokens, lines, labels, notes]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GITHUB_CONFIG_STORAGE_KEY);
+      if (!raw) return;
+
+      const data = JSON.parse(raw);
+      setGithubOwner(data.githubOwner || "");
+      setGithubRepo(data.githubRepo || "");
+      setGithubBranch(data.githubBranch || "main");
+      setGithubFilePath(data.githubFilePath || "public/map-data.json");
+      setRememberGithubConfig(data.rememberGithubConfig ?? true);
+    } catch (error) {
+      console.error("GitHub 설정 복원 실패", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!rememberGithubConfig) {
+      localStorage.removeItem(GITHUB_CONFIG_STORAGE_KEY);
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        GITHUB_CONFIG_STORAGE_KEY,
+        JSON.stringify({
+          githubOwner,
+          githubRepo,
+          githubBranch,
+          githubFilePath,
+          rememberGithubConfig,
+        })
+      );
+    } catch (error) {
+      console.error("GitHub 설정 저장 실패", error);
+    }
+  }, [
+    githubOwner,
+    githubRepo,
+    githubBranch,
+    githubFilePath,
+    rememberGithubConfig,
+  ]);
 
   useEffect(() => {
     const handleWindowMouseUp = () => {
@@ -980,6 +1075,86 @@ export default function App() {
     }
   };
 
+  const uploadToGitHub = async () => {
+    if (!githubOwner.trim()) {
+      setGithubStatus("GitHub 아이디를 입력해주세요.");
+      return;
+    }
+    if (!githubRepo.trim()) {
+      setGithubStatus("저장소 이름을 입력해주세요.");
+      return;
+    }
+    if (!githubBranch.trim()) {
+      setGithubStatus("브랜치명을 입력해주세요.");
+      return;
+    }
+    if (!githubFilePath.trim()) {
+      setGithubStatus("파일 경로를 입력해주세요.");
+      return;
+    }
+    if (!githubToken.trim()) {
+      setGithubStatus("GitHub 토큰을 입력해주세요.");
+      return;
+    }
+
+    const payload = {
+      title,
+      background,
+      tokens,
+      lines,
+      labels,
+      notes,
+    };
+
+    const contentText = JSON.stringify(payload, null, 2);
+    const encodedContent = encodeBase64Utf8(contentText);
+
+    const owner = githubOwner.trim();
+    const repo = githubRepo.trim();
+    const branch = githubBranch.trim();
+    const path = githubFilePath.trim();
+
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+    setGithubUploading(true);
+    setGithubStatus("GitHub에 업로드 중...");
+
+    try {
+      let sha: string | undefined;
+
+      try {
+        const existing = await githubRequestJson(
+          `${apiUrl}?ref=${encodeURIComponent(branch)}`,
+          githubToken.trim()
+        );
+        sha = existing?.sha;
+      } catch (error: any) {
+        if (!String(error?.message || "").includes("404")) {
+          throw error;
+        }
+      }
+
+      await githubRequestJson(apiUrl, githubToken.trim(), {
+        method: "PUT",
+        body: JSON.stringify({
+          message: `Update map-data.json (${new Date().toLocaleString("ko-KR")})`,
+          content: encodedContent,
+          branch,
+          sha,
+        }),
+      });
+
+      setGithubStatus("업로드 완료! 잠시 후 Vercel에 반영됩니다.");
+    } catch (error: any) {
+      console.error(error);
+      setGithubStatus(
+        `업로드 실패: ${error?.message || "알 수 없는 오류가 발생했습니다."}`
+      );
+    } finally {
+      setGithubUploading(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -1242,6 +1417,91 @@ export default function App() {
                 <ImageIcon size={16} />
                 JPG 저장
               </button>
+            </div>
+
+            <div style={sectionStyle()}>
+              <div style={{ marginBottom: 12, fontWeight: 700 }}>GitHub 자동 업로드</div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <input
+                  value={githubOwner}
+                  onChange={(e) => setGithubOwner(e.target.value)}
+                  placeholder="GitHub 아이디 (예: yowon08)"
+                  style={inputStyle()}
+                />
+                <input
+                  value={githubRepo}
+                  onChange={(e) => setGithubRepo(e.target.value)}
+                  placeholder="저장소 이름 (예: tactical-map-site)"
+                  style={inputStyle()}
+                />
+                <input
+                  value={githubBranch}
+                  onChange={(e) => setGithubBranch(e.target.value)}
+                  placeholder="브랜치명 (기본: main)"
+                  style={inputStyle()}
+                />
+                <input
+                  value={githubFilePath}
+                  onChange={(e) => setGithubFilePath(e.target.value)}
+                  placeholder="파일 경로 (예: public/map-data.json)"
+                  style={inputStyle()}
+                />
+                <input
+                  type="password"
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                  placeholder="GitHub Personal Access Token"
+                  style={inputStyle()}
+                />
+
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 14,
+                    color: "#d4d4d8",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={rememberGithubConfig}
+                    onChange={(e) => setRememberGithubConfig(e.target.checked)}
+                  />
+                  아이디/저장소/브랜치/경로 기억하기 (토큰 제외)
+                </label>
+
+                <button
+                  style={buttonStyle(false)}
+                  onClick={uploadToGitHub}
+                  disabled={githubUploading}
+                >
+                  <Upload size={16} />
+                  {githubUploading ? "업로드 중..." : "GitHub에 저장"}
+                </button>
+
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: githubStatus.startsWith("업로드 완료")
+                      ? "#86efac"
+                      : githubStatus.startsWith("업로드 실패")
+                      ? "#fca5a5"
+                      : "#a1a1aa",
+                    whiteSpace: "pre-wrap",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {githubStatus || "public/map-data.json 파일을 자동으로 갱신합니다."}
+                </div>
+
+                <div style={{ fontSize: 12, color: "#71717a", lineHeight: 1.5 }}>
+                  권장 경로: <code>public/map-data.json</code>
+                  <br />
+                  관전 사이트는 <code>/map-data.json</code>을 읽도록 유지하세요.
+                </div>
+              </div>
             </div>
 
             <input
